@@ -279,7 +279,7 @@ def build_session(cookie_header: str, browser: str, cookie_file: str, domain: st
     return session
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Exporta todas tus listas de ZonaTMO/LectorManga en un solo comando. "
@@ -310,7 +310,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default="exports", help="Carpeta donde se guardan los .html")
     parser.add_argument("--max-pages", default=300, type=int, help="Límite de páginas por lista para evitar loops")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def interactive_auth_menu(args: argparse.Namespace) -> argparse.Namespace:
@@ -352,8 +352,8 @@ def interactive_auth_menu(args: argparse.Namespace) -> argparse.Namespace:
         return args
 
 
-def main() -> int:
-    args = interactive_auth_menu(parse_args())
+def main(argv: list[str] | None = None) -> int:
+    args = interactive_auth_menu(parse_args(argv))
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

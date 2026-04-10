@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
+import contextlib
+import io
+import shlex
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+import export_lists
 
 DEFAULT_BASE_URL = "https://lectormanga.nakamasweb.com/profile/follow"
 
@@ -102,9 +105,7 @@ class ExportApp:
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        cmd = [
-            sys.executable,
-            "export_lists.py",
+        cli_args = [
             "--base-url",
             base_url,
             "--cookie-file",
@@ -113,19 +114,25 @@ class ExportApp:
             output_dir,
         ]
 
-        self._log(f"$ {' '.join(cmd)}")
+        self._log(f"$ export_lists.py {shlex.join(cli_args)}")
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                return_code = export_lists.main(cli_args)
         except Exception as exc:
             messagebox.showerror("Error", f"No se pudo ejecutar export_lists.py\n{exc}")
             return
 
-        if proc.stdout:
-            self._log(proc.stdout.strip())
-        if proc.stderr:
-            self._log("[stderr]\n" + proc.stderr.strip())
+        stdout_value = stdout_buffer.getvalue().strip()
+        stderr_value = stderr_buffer.getvalue().strip()
 
-        if proc.returncode == 0:
+        if stdout_value:
+            self._log(stdout_value)
+        if stderr_value:
+            self._log("[stderr]\n" + stderr_value)
+
+        if return_code == 0:
             messagebox.showinfo("Listo", f"Exportación finalizada en:\n{output_dir}")
         else:
             messagebox.showwarning("Advertencia", "La exportación terminó con errores. Revisa el log.")
