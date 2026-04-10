@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 from http.cookiejar import MozillaCookieJar
+import random
 import re
+import time
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
@@ -22,14 +24,14 @@ USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-DEFAULT_BASE_URL = "https://lectormanga.nakamasweb.com/profile/follow"
+DEFAULT_BASE_URL = "https://lectormanga.nakamasweb.com/profile/follow/true"
 KNOWN_PROFILE_LISTS = [
-    ("Siguiendo", "https://lectormanga.nakamasweb.com/profile/follow"),
-    ("Pendiente", "https://lectormanga.nakamasweb.com/profile/pending"),
-    ("Viendo", "https://lectormanga.nakamasweb.com/profile/watch"),
-    ("Favorito", "https://lectormanga.nakamasweb.com/profile/wish"),
-    ("Tengo", "https://lectormanga.nakamasweb.com/profile/have"),
-    ("Abandonado", "https://lectormanga.nakamasweb.com/profile/abandoned"),
+    ("Siguiendo", "https://lectormanga.nakamasweb.com/profile/follow/true"),
+    ("Pendiente", "https://lectormanga.nakamasweb.com/profile/pending/true"),
+    ("Viendo", "https://lectormanga.nakamasweb.com/profile/watch/true"),
+    ("Favorito", "https://lectormanga.nakamasweb.com/profile/wish/true"),
+    ("Tengo", "https://lectormanga.nakamasweb.com/profile/have/true"),
+    ("Abandonado", "https://lectormanga.nakamasweb.com/profile/abandoned/true"),
 ]
 
 
@@ -38,6 +40,9 @@ class MangaItem:
     title: str
     link: str
     image_url: str
+    read_chapters: int | None = None
+    total_chapters: int | None = None
+    progress: float | None = None
 
 
 @dataclass
@@ -69,6 +74,42 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class=\"container\">
     <table>
       <thead><tr><th>Imagen</th><th>Título</th></tr></thead>
+      <tbody>
+        {rows}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
+"""
+
+
+HTML_TEMPLATE_PROGRESS = """<!DOCTYPE html>
+<html lang=\"es\">
+<head>
+  <meta charset=\"UTF-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+  <title>{title}</title>
+  <style>
+    body {{ background:#121212; color:#fff; font-family:Arial,sans-serif; margin:0; }}
+    .topnav {{ background:#1e1e1e; padding:12px 16px; font-size:20px; font-weight:700; text-align:center; }}
+    .container {{ padding:16px; display:flex; justify-content:center; }}
+    table {{ width:min(1300px,95%); border-collapse:collapse; background:#222; }}
+    th, td {{ border:1px solid #444; padding:10px; text-align:center; }}
+    th {{ background:#333; }}
+    td:first-child {{ width:80px; }}
+    td:nth-child(2) {{ text-align:left; }}
+    img {{ width:60px; height:80px; object-fit:cover; border-radius:4px; }}
+    a {{ color:#1e90ff; }}
+    .progress-bar {{ background:#444; border-radius:4px; overflow:hidden; height:20px; }}
+    .progress-fill {{ background:#4caf50; height:100%; transition:width .3s; }}
+  </style>
+</head>
+<body>
+  <div class=\"topnav\">{title}</div>
+  <div class=\"container\">
+    <table>
+      <thead><tr><th>Imagen</th><th>Título</th><th>Leídos</th><th>Total</th><th>Progreso</th></tr></thead>
       <tbody>
         {rows}
       </tbody>
@@ -177,6 +218,73 @@ def parse_lectormanga_items(items, page_url: str) -> list[MangaItem]:
     return output
 
 
+def fetch_chapter_progress(
+    session: requests.Session,
+    item: MangaItem,
+    *,
+    delay_range: tuple[float, float] = (1.0, 3.0),
+) -> MangaItem:
+    """Visita la página de detalle de un manga y cuenta capítulos leídos/totales."""
+    time.sleep(random.uniform(*delay_range))
+
+    try:
+        resp = session.get(item.link, timeout=30)
+    except requests.RequestException:
+        return item
+
+    if resp.status_code == 429:
+        print(f"  [!] 429 para {item.title} — omitido")
+        return item
+    if not resp.ok:
+        print(f"  [!] {resp.status_code} para {item.title} — omitido")
+        return item
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Cada capítulo tiene un span.chapter-viewed-icon con data-chapter único.
+    # fa-eye = leído, fa-eye-slash = no leído.
+    # Un mismo capítulo puede tener múltiples uploads (scanlators), así que
+    # deduplicamos por data-chapter.
+    all_chapter_spans = soup.select(".chapter-viewed-icon[data-chapter]")
+    seen_chapters: set[str] = set()
+    total = 0
+    read = 0
+    for span in all_chapter_spans:
+        ch_id = span.get("data-chapter", "")
+        if not ch_id or ch_id in seen_chapters:
+            continue
+        seen_chapters.add(ch_id)
+        total += 1
+        if "fa-eye" in span.get("class", []) and "fa-eye-slash" not in span.get("class", []):
+            read += 1
+
+    pct = round(read / total * 100, 1) if total > 0 else 0.0
+
+    return MangaItem(
+        title=item.title,
+        link=item.link,
+        image_url=item.image_url,
+        read_chapters=read,
+        total_chapters=total,
+        progress=pct,
+    )
+
+
+def enrich_items_with_progress(
+    session: requests.Session,
+    items: list[MangaItem],
+    *,
+    delay_range: tuple[float, float] = (1.0, 3.0),
+) -> list[MangaItem]:
+    """Enriquece cada manga con datos de progreso de capítulos."""
+    enriched: list[MangaItem] = []
+    total = len(items)
+    for idx, item in enumerate(items, 1):
+        print(f"  [{idx}/{total}] Obteniendo progreso: {item.title}")
+        enriched.append(fetch_chapter_progress(session, item, delay_range=delay_range))
+    return enriched
+
+
 def fetch_paginated_items(session: requests.Session, list_url: str, max_pages: int) -> list[MangaItem]:
     all_items: list[MangaItem] = []
 
@@ -198,16 +306,29 @@ def fetch_paginated_items(session: requests.Session, list_url: str, max_pages: i
     return all_items
 
 
-def render_html(title: str, items: Iterable[MangaItem]) -> str:
+def render_html(title: str, items: Iterable[MangaItem], *, with_progress: bool = False) -> str:
     rows = []
     for item in items:
-        rows.append(
+        row = (
             "<tr>"
             f"<td><img src=\"{item.image_url}\" alt=\"{item.title}\" /></td>"
             f"<td><a href=\"{item.link}\" target=\"_blank\" rel=\"noopener noreferrer\">{item.title}</a></td>"
-            "</tr>"
         )
-    return HTML_TEMPLATE.format(title=title, rows="\n".join(rows))
+        if with_progress:
+            read = item.read_chapters if item.read_chapters is not None else "—"
+            total = item.total_chapters if item.total_chapters is not None else "—"
+            pct = item.progress if item.progress is not None else 0
+            pct_display = f"{pct}%" if item.progress is not None else "—"
+            row += (
+                f"<td>{read}</td>"
+                f"<td>{total}</td>"
+                f"<td><div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width:{pct}%\"></div></div>"
+                f"<small>{pct_display}</small></td>"
+            )
+        row += "</tr>"
+        rows.append(row)
+    template = HTML_TEMPLATE_PROGRESS if with_progress else HTML_TEMPLATE
+    return template.format(title=title, rows="\n".join(rows))
 
 
 def load_browser_cookie_jar(browser: str, domain: str):
@@ -310,6 +431,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default="exports", help="Carpeta donde se guardan los .html")
     parser.add_argument("--max-pages", default=300, type=int, help="Límite de páginas por lista para evitar loops")
+    parser.add_argument(
+        "--with-progress",
+        action="store_true",
+        default=False,
+        help="Visita cada manga para obtener capítulos leídos/totales (más lento, agrega delay entre peticiones).",
+    )
     return parser.parse_args(argv)
 
 
@@ -383,9 +510,13 @@ def main(argv: list[str] | None = None) -> int:
         items = fetch_paginated_items(session, manga_list.url, args.max_pages)
         total_items += len(items)
 
+        if args.with_progress and items:
+            print(f"  [*] Obteniendo progreso de capítulos ({len(items)} mangas)...")
+            items = enrich_items_with_progress(session, items)
+
         filename = sanitize_filename(manga_list.title) + ".html"
         destination = output_dir / filename
-        destination.write_text(render_html(manga_list.title, items), encoding="utf-8")
+        destination.write_text(render_html(manga_list.title, items, with_progress=args.with_progress), encoding="utf-8")
         print(f"[✓] Exportado: {destination} ({len(items)} elementos)")
 
     print(f"\n[✓] Terminado. Archivos en: {output_dir.resolve()} | Elementos totales: {total_items}")

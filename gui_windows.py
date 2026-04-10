@@ -3,16 +3,34 @@
 
 from __future__ import annotations
 
-import contextlib
 import io
+import queue
 import shlex
+import sys
+import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import export_lists
 
-DEFAULT_BASE_URL = "https://lectormanga.nakamasweb.com/profile/follow"
+DEFAULT_BASE_URL = "https://lectormanga.nakamasweb.com/profile/follow/true"
+
+LOG_POLL_MS = 100  # cada cuánto revisa la cola de mensajes
+
+
+class QueueWriter:
+    """Reemplaza stdout/stderr para enviar cada print() a una cola thread-safe."""
+
+    def __init__(self, log_queue: queue.Queue) -> None:
+        self._queue = log_queue
+
+    def write(self, text: str) -> None:
+        if text and text.strip():
+            self._queue.put(text)
+
+    def flush(self) -> None:
+        pass
 
 
 class ExportApp:
@@ -24,6 +42,10 @@ class ExportApp:
         self.cookie_file_var = tk.StringVar()
         self.output_dir_var = tk.StringVar(value=str(Path.cwd() / "exports"))
         self.base_url_var = tk.StringVar(value=DEFAULT_BASE_URL)
+        self.with_progress_var = tk.BooleanVar(value=False)
+
+        self._running = False
+        self._log_queue: queue.Queue[str] = queue.Queue()
 
         self._build_ui()
 
@@ -60,15 +82,22 @@ class ExportApp:
         ttk.Label(frame, text="Base URL").grid(row=6, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(frame, textvariable=self.base_url_var, width=70).grid(row=7, column=0, columnspan=3, sticky="we")
 
-        ttk.Button(frame, text="Exportar listas", command=self.run_export).grid(row=8, column=0, columnspan=3, sticky="we", pady=(14, 10))
+        ttk.Checkbutton(
+            frame,
+            text="Incluir progreso de capítulos (más lento)",
+            variable=self.with_progress_var,
+        ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        self.export_btn = ttk.Button(frame, text="Exportar listas", command=self.run_export)
+        self.export_btn.grid(row=9, column=0, columnspan=3, sticky="we", pady=(14, 10))
 
         self.log = tk.Text(frame, height=16, wrap="word")
-        self.log.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        self.log.grid(row=10, column=0, columnspan=3, sticky="nsew")
 
         frame.columnconfigure(0, weight=1)
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(2, weight=0)
-        frame.rowconfigure(9, weight=1)
+        frame.rowconfigure(10, weight=1)
 
     def select_cookie_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -86,9 +115,54 @@ class ExportApp:
     def _log(self, text: str) -> None:
         self.log.insert("end", text + "\n")
         self.log.see("end")
-        self.root.update_idletasks()
+
+    def _poll_log_queue(self) -> None:
+        """Lee mensajes de la cola y los muestra en el widget de log."""
+        while True:
+            try:
+                msg = self._log_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._log(msg)
+
+        if self._running:
+            self.root.after(LOG_POLL_MS, self._poll_log_queue)
+
+    def _export_thread(self, cli_args: list[str], output_dir: str) -> None:
+        """Ejecuta export_lists.main() en un hilo secundario."""
+        writer = QueueWriter(self._log_queue)
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        try:
+            sys.stdout = writer  # type: ignore[assignment]
+            sys.stderr = writer  # type: ignore[assignment]
+            return_code = export_lists.main(cli_args)
+        except Exception as exc:
+            self._log_queue.put(f"[ERROR] {exc}")
+            return_code = 1
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+        # Notificar al hilo principal que terminó
+        self.root.after(0, self._on_export_finished, return_code, output_dir)
+
+    def _on_export_finished(self, return_code: int, output_dir: str) -> None:
+        """Callback en el hilo principal cuando el export termina."""
+        # Vaciar mensajes pendientes
+        self._running = False
+        self._poll_log_queue()
+
+        self.export_btn.configure(state="normal")
+
+        if return_code == 0:
+            messagebox.showinfo("Listo", f"Exportación finalizada en:\n{output_dir}")
+        else:
+            messagebox.showwarning("Advertencia", "La exportación terminó con errores. Revisa el log.")
 
     def run_export(self) -> None:
+        if self._running:
+            return
+
         cookie_file = self.cookie_file_var.get().strip()
         output_dir = self.output_dir_var.get().strip()
         base_url = self.base_url_var.get().strip() or DEFAULT_BASE_URL
@@ -114,28 +188,22 @@ class ExportApp:
             output_dir,
         ]
 
+        if self.with_progress_var.get():
+            cli_args.append("--with-progress")
+
+        self.log.delete("1.0", "end")
         self._log(f"$ export_lists.py {shlex.join(cli_args)}")
-        stdout_buffer = io.StringIO()
-        stderr_buffer = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
-                return_code = export_lists.main(cli_args)
-        except Exception as exc:
-            messagebox.showerror("Error", f"No se pudo ejecutar export_lists.py\n{exc}")
-            return
 
-        stdout_value = stdout_buffer.getvalue().strip()
-        stderr_value = stderr_buffer.getvalue().strip()
+        self._running = True
+        self.export_btn.configure(state="disabled")
+        self.root.after(LOG_POLL_MS, self._poll_log_queue)
 
-        if stdout_value:
-            self._log(stdout_value)
-        if stderr_value:
-            self._log("[stderr]\n" + stderr_value)
-
-        if return_code == 0:
-            messagebox.showinfo("Listo", f"Exportación finalizada en:\n{output_dir}")
-        else:
-            messagebox.showwarning("Advertencia", "La exportación terminó con errores. Revisa el log.")
+        thread = threading.Thread(
+            target=self._export_thread,
+            args=(cli_args, output_dir),
+            daemon=True,
+        )
+        thread.start()
 
 
 def main() -> int:
