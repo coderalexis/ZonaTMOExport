@@ -26,6 +26,7 @@ python export_lists.py \
 ```
 
 > Cambia `--browser` por `firefox`, `edge`, `brave`, etc. según uses.
+> Si sale `PermissionError` al leer cookies de Chrome, cierra completamente el navegador (incluyendo procesos en segundo plano) o usa `--cookie-file`.
 
 ### Opción manual: pasar cookie copiada de DevTools
 
@@ -50,7 +51,20 @@ Si ejecutas solo:
 python export_lists.py
 ```
 
-el script detecta que no pasaste `--browser` ni `--cookie` y te muestra un menú para escoger navegador o pegar cookie manual.
+el script detecta que no pasaste `--browser` ni `--cookie` y te muestra un menú para escoger navegador, pegar cookie manual o indicar archivo `cookies.txt`.
+
+### Opción robusta: `cookies.txt` exportado desde extensión
+
+1. Instala una extensión tipo **Cookie-Editor** o similar.
+2. Exporta cookies del sitio en formato **Netscape cookies.txt**.
+3. Ejecuta:
+
+```bash
+python export_lists.py \
+  --base-url "https://lectormanga.nakamasweb.com/profile/follow" \
+  --cookie-file "C:\\ruta\\cookies.txt" \
+  --output-dir "exports"
+```
 
 ## URLs de listas soportadas por defecto (lectormanga.nakamasweb.com)
 
@@ -79,5 +93,6 @@ Parámetros principales:
 - `--cookie`: cookie del navegador.
 - `--browser`: lee cookies automáticamente desde tu navegador local.
 - `--cookie-domain`: dominio para filtrar cookies (si no se pasa, usa el dominio de `--base-url`).
+- `--cookie-file`: archivo `cookies.txt` (formato Netscape) como alternativa a `--browser`.
 - `--output-dir`: carpeta destino.
 - `--max-pages`: límite de páginas por lista (default: `300`).

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from http.cookiejar import MozillaCookieJar
 import re
 from dataclasses import dataclass
 from getpass import getpass
@@ -222,15 +223,47 @@ def load_browser_cookie_jar(browser: str, domain: str):
     loader = loaders.get(browser)
     if not loader:
         raise ValueError(f"Navegador no soportado: {browser}")
-    return loader(domain_name=domain)
+    try:
+        return loader(domain_name=domain)
+    except PermissionError as exc:
+        raise RuntimeError(
+            "No se pudo leer la base de cookies del navegador por permisos/bloqueo. "
+            "Cierra el navegador por completo o usa --cookie / --cookie-file."
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            "Error al abrir cookies del navegador. "
+            "Intenta cerrar el navegador o usar --cookie / --cookie-file."
+        ) from exc
 
 
-def build_session(cookie_header: str, browser: str, domain: str) -> requests.Session:
+def load_cookie_file(cookie_file: str, domain: str) -> requests.cookies.RequestsCookieJar:
+    jar = MozillaCookieJar(cookie_file)
+    try:
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"No existe el archivo de cookies: {cookie_file}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"No se pudo leer el archivo de cookies: {cookie_file}") from exc
+
+    output = requests.cookies.RequestsCookieJar()
+    for cookie in jar:
+        if domain and domain not in cookie.domain:
+            continue
+        output.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
+    return output
+
+
+def build_session(cookie_header: str, browser: str, cookie_file: str, domain: str) -> requests.Session:
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
 
     if cookie_header:
         session.headers.update({"Cookie": cookie_header})
+        return session
+
+    if cookie_file:
+        session.cookies.update(load_cookie_file(cookie_file, domain))
         return session
 
     if browser:
@@ -264,13 +297,18 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Dominio para filtrar cookies del navegador. Default: dominio de --base-url.",
     )
+    parser.add_argument(
+        "--cookie-file",
+        default="",
+        help="Archivo cookies.txt (formato Netscape) exportado desde extensión del navegador.",
+    )
     parser.add_argument("--output-dir", default="exports", help="Carpeta donde se guardan los .html")
     parser.add_argument("--max-pages", default=300, type=int, help="Límite de páginas por lista para evitar loops")
     return parser.parse_args()
 
 
 def interactive_auth_menu(args: argparse.Namespace) -> argparse.Namespace:
-    if args.browser or args.cookie:
+    if args.browser or args.cookie or args.cookie_file:
         return args
 
     options = [
@@ -280,6 +318,7 @@ def interactive_auth_menu(args: argparse.Namespace) -> argparse.Namespace:
         ("brave", "Usar cookies de Brave"),
         ("opera", "Usar cookies de Opera"),
         ("cookie", "Pegar cookie manual"),
+        ("cookie-file", "Ruta a cookie file (cookies.txt)"),
         ("none", "Continuar sin autenticación"),
     ]
 
@@ -289,7 +328,7 @@ def interactive_auth_menu(args: argparse.Namespace) -> argparse.Namespace:
         print(f"  {idx}. {label}")
 
     while True:
-        selection = input("Opción [1-7]: ").strip()
+        selection = input("Opción [1-8]: ").strip()
         if not selection.isdigit():
             print("Entrada inválida. Escribe un número.")
             continue
@@ -300,6 +339,8 @@ def interactive_auth_menu(args: argparse.Namespace) -> argparse.Namespace:
         key = options[selected_index - 1][0]
         if key == "cookie":
             args.cookie = getpass("Pega la cookie completa (no se mostrará): ").strip()
+        elif key == "cookie-file":
+            args.cookie_file = input("Ruta del archivo cookies.txt: ").strip()
         elif key != "none":
             args.browser = key
         return args
@@ -312,7 +353,11 @@ def main() -> int:
 
     parsed_base = urlparse(args.base_url)
     cookie_domain = args.cookie_domain or parsed_base.hostname or ""
-    session = build_session(args.cookie, args.browser, cookie_domain)
+    try:
+        session = build_session(args.cookie, args.browser, args.cookie_file, cookie_domain)
+    except RuntimeError as exc:
+        print(f"[x] {exc}")
+        return 1
 
     print(f"[*] Cargando base: {args.base_url}")
     resp = session.get(args.base_url, timeout=30)
