@@ -13,6 +13,20 @@ pip install requests beautifulsoup4 browser-cookie3
 
 ## Uso rápido
 
+## Interfaz visual para Windows (recomendada para usuarios no técnicos)
+
+Ejecuta:
+
+```bash
+python gui_windows.py
+```
+
+La ventana solo te pide:
+- `cookies.txt` (exportado desde la extensión **Get cookies.txt LOCALLY**)
+- Carpeta de salida
+
+Y luego pulsas **Exportar listas**.
+
 ### Opción fácil (recomendada): leer cookies del navegador automáticamente
 
 1. Inicia sesión en ZonaTMO/LectorManga desde tu navegador (Chrome/Firefox/Edge/Brave/Opera).
@@ -97,3 +111,31 @@ Parámetros principales:
 - `--cookie-file`: archivo `cookies.txt` (formato Netscape) como alternativa a `--browser`.
 - `--output-dir`: carpeta destino.
 - `--max-pages`: límite de páginas por lista (default: `300`).
+
+## Pasar a ejecutable de Windows (.exe)
+
+1. Instala Python 3.9+.
+2. Instala dependencias:
+
+```bash
+pip install requests beautifulsoup4 browser-cookie3 pyinstaller
+```
+
+3. (Importante) Instala la extensión **Get cookies.txt LOCALLY** en tu navegador para exportar `cookies.txt`.
+4. Genera el ejecutable:
+
+```bash
+pyinstaller --onefile --windowed gui_windows.py
+```
+
+5. El `.exe` quedará en:
+
+```text
+dist/gui_windows.exe
+```
+
+6. Para usarlo:
+   - Exporta `cookies.txt` desde la extensión.
+   - Abre `gui_windows.exe`.
+   - Selecciona `cookies.txt` y carpeta de salida.
+   - Pulsa **Exportar listas**.
