@@ -235,6 +235,12 @@ def load_browser_cookie_jar(browser: str, domain: str):
             "Error al abrir cookies del navegador. "
             "Intenta cerrar el navegador o usar --cookie / --cookie-file."
         ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudieron descifrar cookies del navegador (DPAPI/MAC). "
+            "Esto pasa en algunos perfiles de Brave/Chrome. "
+            "Usa --cookie-file (recomendado) o --cookie manual."
+        ) from exc
 
 
 def load_cookie_file(cookie_file: str, domain: str) -> requests.cookies.RequestsCookieJar:

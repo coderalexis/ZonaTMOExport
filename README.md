@@ -27,6 +27,7 @@ python export_lists.py \
 
 > Cambia `--browser` por `firefox`, `edge`, `brave`, etc. según uses.
 > Si sale `PermissionError` al leer cookies de Chrome, cierra completamente el navegador (incluyendo procesos en segundo plano) o usa `--cookie-file`.
+> Si sale error de descifrado (`DPAPI`, `MAC check failed`, `Unable to get key for cookie decryption`), usa `--cookie-file`: es el método más estable en Windows.
 
 ### Opción manual: pasar cookie copiada de DevTools
 
