@@ -128,6 +128,8 @@ pip install requests beautifulsoup4 browser-cookie3 pyinstaller
 pyinstaller --onefile --windowed gui_windows.py
 ```
 
+> Alternativa fácil: en Windows ejecuta `build_exe.bat` (instala dependencias y compila automáticamente).
+
 5. El `.exe` quedará en:
 
 ```text
